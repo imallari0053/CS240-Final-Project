@@ -1,0 +1,26 @@
+# R-type: add two registers (craft)
+craft $t1, $t2, $t3
+
+# I-type: add immediate to register (flint)
+flint $t4, $t1, 10
+
+# Custom R-type: BedWars adds 69 to $t5
+BedWars $t5, $t2
+
+# I-type: branch if equal (steel)
+steel $t1, $t2, 8
+
+# Special: move from hi register (DiamondPickAxe)
+DiamondPickAxe $t6
+
+# Special: HappyGhast adds 42 and prints message
+HappyGhast $t7
+
+# Special: print “I am Steve”
+Steve
+
+# Special: print newline
+RedStone
+
+# J-type: jump to address 64
+CraftingTable 64

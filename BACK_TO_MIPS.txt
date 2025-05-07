@@ -1,0 +1,9 @@
+craft $t1, $t2, $t3
+flint $t4, $t1, 10
+BedWars $zero, $t2, 26665
+steel $t1, $t2, 8
+DiamondPickAxe $t6, $zero, $zero
+HappyGhast $t7
+Steve
+RedStone
+CraftingTable 64
