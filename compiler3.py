@@ -1,10 +1,13 @@
 import re
+import sys
+import os
 
 
 class Compiler:
     def __init__(self):
         self.reset_compiler()
 
+    #Set the data and memory address
     def reset_compiler(self):
         self.memory_address = 5000
         self.t_register = 0
@@ -27,7 +30,7 @@ class Compiler:
             self.vars[var_name] = {'addr': self.memory_address}
             self.memory_address += 4
             # Add comment for variable declaration
-            #self.text_section.append(f"# Declare variable {var_name} at address {self.vars[var_name]['addr']}")
+            # self.text_section.append(f"# Declare variable {var_name} at address {self.vars[var_name]['addr']}")
 
     def get_var_addr(self, var_name):
         if var_name in self.vars:
@@ -46,8 +49,6 @@ class Compiler:
 
     def add_string(self, value):
         """Store a string in the data section and return its label."""
-        # Debug
-        # print(f"Adding string: '{value}'")
 
         if value not in self.string_data:
             label = f"str_{len(self.string_data)}"
@@ -58,9 +59,117 @@ class Compiler:
             # Just ensure proper formatting for the .asciiz directive
 
             self.data_section.append(f'{label}: .asciiz "{value}"')
-            # print(f"Added string with label {label}: '{value}'")
 
         return self.string_data[value]
+
+    def extract_minecraft_instructions(self, c_code):
+        """Extract Minecraft-themed instructions from C code."""
+        # Check for special case first
+        if c_code.lstrip().startswith("IronGolem $t0"):
+            return "IronGolem $t0"
+
+        # Define regex pattern to match all Minecraft instructions
+        pattern = r'(Steve|EnderDragon|LavaChicken|GoldenApple|Creeper|BedWars\s+\$t\d+\s*,\s*\$\w+|ChickenJockey\s+\$t\d+\s*,\s*\$t\d+|CrushinLoaf\s+\$t\d+|IronGolem\s+\$t\d+|HappyGhast\s+\$t\d+)\s*;'
+
+        # Find all matches in the code
+        matches = re.finditer(pattern, c_code)
+
+        # Extract each match without the trailing semicolon
+        instructions = []
+        for match in matches:
+            instruction = match.group(1).strip()
+            instructions.append(instruction)
+
+        # Return the extracted instructions as a string
+        return "\n".join(instructions)
+
+    def add_minecraft_instruction(self, instruction):
+        """Add a minecraft instruction to the tracking list."""
+        self.minecraft_instructions.append(instruction)
+        # Also add a placeholder comment in the standard MIPS assembly
+        self.text_section.append(f"# Minecraft Instruction: {instruction}")
+
+    def compile_statement(self, statement):
+        statement = statement.strip()
+
+        # Handle empty statements
+        if not statement:
+            return
+
+        # Handle Minecraft custom instructions
+        if statement.startswith('Steve;'):
+            self.add_minecraft_instruction("Steve")
+        elif statement.startswith('EnderDragon;'):
+            self.add_minecraft_instruction("EnderDragon")
+        elif statement.startswith('LavaChicken;'):
+            self.add_minecraft_instruction("LavaChicken")
+        elif statement.startswith('GoldenApple;'):
+            self.add_minecraft_instruction("GoldenApple")
+        elif statement.startswith('Creeper;'):
+            self.add_minecraft_instruction("Creeper")
+        elif statement.startswith('BedWars '):
+            args = statement[7:].split(';')[0].strip()
+            self.add_minecraft_instruction(f"BedWars {args}")
+        elif statement.startswith('ChickenJockey '):
+            args = statement[13:].split(';')[0].strip()
+            self.add_minecraft_instruction(f"ChickenJockey {args}")
+        elif statement.startswith('CrushinLoaf '):
+            args = statement[12:].split(';')[0].strip()
+            self.add_minecraft_instruction(f"CrushinLoaf {args}")
+        elif statement.startswith('IronGolem '):
+            args = statement[10:].split(';')[0].strip()
+            self.add_minecraft_instruction(f"IronGolem {args}")
+        elif statement.startswith('HappyGhast '):
+            args = statement[11:].split(';')[0].strip()
+            self.add_minecraft_instruction(f"HappyGhast {args}")
+        # Variable declaration
+        elif statement.startswith('int '):
+            var_name = statement[4:].split(';')[0].strip()
+            self.declare_variable(var_name)
+        # Assignment
+        elif '=' in statement and not statement.startswith('if') and not statement.startswith('while'):
+            parts = statement.split('=', 1)
+            target = parts[0].strip()
+            value = parts[1].split(';')[0].strip()
+            self.compile_assignment(target, value)
+        # While loop
+        elif statement.startswith('while ('):
+            condition = re.search(r'while\s*\((.*?)\)', statement).group(1).strip()
+            body_start = statement.find('{') + 1
+            body_end = self.find_matching_brace(statement, body_start - 1)
+            body = statement[body_start:body_end].strip()
+            self.compile_while(condition, body)
+        # If statement
+        elif statement.startswith('if ('):
+            condition = re.search(r'if\s*\((.*?)\)', statement).group(1).strip()
+            body_start = statement.find('{') + 1
+            body_end = self.find_matching_brace(statement, body_start - 1)
+            body = statement[body_start:body_end].strip()
+            self.compile_if(condition, body)
+        # Print string statement
+        elif 'print_str' in statement:
+            try:
+                match = re.search(r'print_str\s*\(\s*"(.*?)"\s*\)', statement, re.DOTALL)
+                if match:
+                    value = match.group(1)
+                else:
+                    value = self.extract_string_from_print(statement)
+                self.compile_print('str', value)
+            except Exception as e:
+                print(f"Error extracting string: {e}\nStatement: {statement}")
+        # Print int statement
+        elif 'print_int' in statement:
+            try:
+                value = re.search(r'print_int\s*\(\s*(.*?)\s*\)', statement).group(1).strip()
+                self.compile_print('int', value)
+            except Exception as e:
+                print(f"Error extracting int: {e}\nStatement: {statement}")
+        # Multiple statements (separated by semicolons)
+        elif ';' in statement and not re.search(r'".*;.*"', statement):  # Avoid splitting inside string literals
+            statements = self.split_statements_by_semicolon(statement)
+            for stmt in statements:
+                if stmt.strip():
+                    self.compile_statement(stmt.strip() + ';')
 
     def compile_assignment(self, target, value):
         # Add comment
@@ -69,13 +178,13 @@ class Compiler:
         # Handle constant assignments
         if value.isdigit() or (value.startswith('-') and value[1:].isdigit()):
             reg = self.get_temp_reg()
-            self.text_section.append(f"li {reg}, {value}")
-            self.text_section.append(f"sw {reg}, {self.get_var_addr(target)}")
+            self.text_section.append(f"enderman {reg}, {value}")
+            self.text_section.append(f"pickaxe {reg}, {self.get_var_addr(target)}")
         # Handle variable assignments
         elif value in self.vars:
             reg1 = self.get_temp_reg()
-            self.text_section.append(f"lw {reg1}, {self.get_var_addr(value)}")
-            self.text_section.append(f"sw {reg1}, {self.get_var_addr(target)}")
+            self.text_section.append(f"elytra {reg1}, {self.get_var_addr(value)}")
+            self.text_section.append(f"pickaxe {reg1}, {self.get_var_addr(target)}")
         # Handle arithmetic operations
         elif any(op in value for op in ['+', '-', '*', '/', '%']):
             self.compile_arithmetic(target, value)
@@ -94,19 +203,20 @@ class Compiler:
 
             # Load first operand
             if var1.isdigit() or (var1.startswith('-') and var1[1:].isdigit()):
-                self.text_section.append(f"li {reg1}, {var1}")
+                self.text_section.append(f"endermen {reg1}, {var1}")
             else:
-                self.text_section.append(f"lw {reg1}, {self.get_var_addr(var1)}")
+                self.text_section.append(f"elytra {reg1}, {self.get_var_addr(var1)}")
 
             # Load second operand
             if var2.isdigit() or (var2.startswith('-') and var2[1:].isdigit()):
-                self.text_section.append(f"li {reg2}, {var2}")
+                self.text_section.append(f"endermen {reg2}, {var2}")
             else:
-                self.text_section.append(f"lw {reg2}, {self.get_var_addr(var2)}")
+                self.text_section.append(f"elytra {reg2}, {self.get_var_addr(var2)}")
 
+            #put all of the operands together
             self.text_section.append(f"div {reg1}, {reg2}")
-            self.text_section.append(f"mfhi {result}")  # Get remainder
-            self.text_section.append(f"sw {result}, {self.get_var_addr(target)}")
+            self.text_section.append(f"diamondpickaxe {result}")  # Get remainder
+            self.text_section.append(f"pickaxe {result}, {self.get_var_addr(target)}")
 
         # Handle addition
         elif '+' in expr:
@@ -121,18 +231,18 @@ class Compiler:
 
             # Load first operand
             if var1.isdigit() or (var1.startswith('-') and var1[1:].isdigit()):
-                self.text_section.append(f"li {reg1}, {var1}")
+                self.text_section.append(f"enderman {reg1}, {var1}")
             else:
-                self.text_section.append(f"lw {reg1}, {self.get_var_addr(var1)}")
+                self.text_section.append(f"elytra {reg1}, {self.get_var_addr(var1)}")
 
             # Load second operand
             if var2.isdigit() or (var2.startswith('-') and var2[1:].isdigit()):
-                self.text_section.append(f"li {reg2}, {var2}")
+                self.text_section.append(f"endermen {reg2}, {var2}")
             else:
-                self.text_section.append(f"lw {reg2}, {self.get_var_addr(var2)}")
+                self.text_section.append(f"elytra {reg2}, {self.get_var_addr(var2)}")
 
-            self.text_section.append(f"add {result}, {reg1}, {reg2}")
-            self.text_section.append(f"sw {result}, {self.get_var_addr(target)}")
+            self.text_section.append(f"craft {result}, {reg1}, {reg2}")
+            self.text_section.append(f"pickaxe {result}, {self.get_var_addr(target)}")
 
     def compile_if(self, condition, body):
         end_label = self.new_label()
@@ -152,18 +262,18 @@ class Compiler:
 
             # Load first operand
             if var1.isdigit() or (var1.startswith('-') and var1[1:].isdigit()):
-                self.text_section.append(f"li {reg1}, {var1}")
+                self.text_section.append(f"endermen {reg1}, {var1}")
             else:
-                self.text_section.append(f"lw {reg1}, {self.get_var_addr(var1)}")
+                self.text_section.append(f"elytra {reg1}, {self.get_var_addr(var1)}")
 
             # Load second operand
             if var2.isdigit() or (var2.startswith('-') and var2[1:].isdigit()):
-                self.text_section.append(f"li {reg2}, {var2}")
+                self.text_section.append(f"endermen {reg2}, {var2}")
             else:
-                self.text_section.append(f"lw {reg2}, {self.get_var_addr(var2)}")
+                self.text_section.append(f"elytra {reg2}, {self.get_var_addr(var2)}")
 
             # Branch if not equal (skip the if body)
-            self.text_section.append(f"bne {reg1}, {reg2}, {end_label}")
+            self.text_section.append(f"emerald {reg1}, {reg2}, {end_label}")
 
         # Handle logical AND
         elif '&&' in condition:
@@ -189,31 +299,31 @@ class Compiler:
 
             # First condition
             if left_var.isdigit() or (left_var.startswith('-') and left_var[1:].isdigit()):
-                self.text_section.append(f"li {reg1}, {left_var}")
+                self.text_section.append(f"enderman {reg1}, {left_var}")
             else:
-                self.text_section.append(f"lw {reg1}, {self.get_var_addr(left_var)}")
+                self.text_section.append(f"elytra {reg1}, {self.get_var_addr(left_var)}")
 
             if left_val.isdigit() or (left_val.startswith('-') and left_val[1:].isdigit()):
-                self.text_section.append(f"li {reg2}, {left_val}")
+                self.text_section.append(f"endermen {reg2}, {left_val}")
             else:
-                self.text_section.append(f"lw {reg2}, {self.get_var_addr(left_val)}")
+                self.text_section.append(f"elytra {reg2}, {self.get_var_addr(left_val)}")
 
             # If first condition fails, skip
-            self.text_section.append(f"bne {reg1}, {reg2}, {end_label}")
+            self.text_section.append(f"emerald {reg1}, {reg2}, {end_label}")
 
             # Second condition
             if right_var.isdigit() or (right_var.startswith('-') and right_var[1:].isdigit()):
-                self.text_section.append(f"li {reg3}, {right_var}")
+                self.text_section.append(f"endermen {reg3}, {right_var}")
             else:
-                self.text_section.append(f"lw {reg3}, {self.get_var_addr(right_var)}")
+                self.text_section.append(f"elytra {reg3}, {self.get_var_addr(right_var)}")
 
             if right_val.isdigit() or (right_val.startswith('-') and right_val[1:].isdigit()):
-                self.text_section.append(f"li {reg4}, {right_val}")
+                self.text_section.append(f"endermen {reg4}, {right_val}")
             else:
-                self.text_section.append(f"lw {reg4}, {self.get_var_addr(right_val)}")
+                self.text_section.append(f"elytra {reg4}, {self.get_var_addr(right_val)}")
 
             # If second condition fails, skip
-            self.text_section.append(f"bne {reg3}, {reg4}, {end_label}")
+            self.text_section.append(f"emerald {reg3}, {reg4}, {end_label}")
 
         # Compile the if body
         body_statements = self.split_compound_statement(body)
@@ -242,18 +352,18 @@ class Compiler:
 
             # Load first operand
             if var1.isdigit() or (var1.startswith('-') and var1[1:].isdigit()):
-                self.text_section.append(f"li {reg1}, {var1}")
+                self.text_section.append(f"enderman {reg1}, {var1}")
             else:
-                self.text_section.append(f"lw {reg1}, {self.get_var_addr(var1)}")
+                self.text_section.append(f"elytra {reg1}, {self.get_var_addr(var1)}")
 
             # Load second operand
             if var2.isdigit() or (var2.startswith('-') and var2[1:].isdigit()):
-                self.text_section.append(f"li {reg2}, {var2}")
+                self.text_section.append(f"enderman {reg2}, {var2}")
             else:
-                self.text_section.append(f"lw {reg2}, {self.get_var_addr(var2)}")
+                self.text_section.append(f"elytra {reg2}, {self.get_var_addr(var2)}")
 
             # Branch if greater or equal (opposite of less than)
-            self.text_section.append(f"bge {reg1}, {reg2}, {end_label}")
+            self.text_section.append(f"steel {reg1}, {reg2}, {end_label}")
 
         # Compile body - splitting compound statements
         for stmt in self.split_compound_statement(body):
@@ -293,8 +403,8 @@ class Compiler:
             label = self.add_string(value)
             # Check if the string was added successfully
             if label:
-                self.text_section.append(f"li $v0, 4")
-                self.text_section.append(f"la $a0, {label}")
+                self.text_section.append(f"endermen $v0, 4")
+                self.text_section.append(f"TheNether $a0, {label}")
                 self.text_section.append(f"syscall")
             else:
                 print(f"Warning: Failed to add string: '{value}'")
@@ -303,18 +413,18 @@ class Compiler:
             reg = self.get_temp_reg()
 
             if value.isdigit() or (value.startswith('-') and value[1:].isdigit()):
-                self.text_section.append(f"li {reg}, {value}")
+                self.text_section.append(f"endermen {reg}, {value}")
             else:
                 addr = self.get_var_addr(value)
                 if addr is not None:
-                    self.text_section.append(f"lw {reg}, {addr}")
+                    self.text_section.append(f"elytra {reg}, {addr}")
                 else:
                     print(f"Warning: Variable '{value}' not declared")
                     return
 
-            self.text_section.append(f"move $a0, {reg}")
-            self.text_section.append(f"li $v0, 1")
-            self.text_section.append(f"syscall")
+            self.text_section.append(f"Teleport $a0, {reg}")
+            self.text_section.append(f"endermen $v0, 1")
+            self.text_section.append(f"Bedrock")
 
     def compile_statement(self, statement):
         statement = statement.strip()
@@ -513,8 +623,8 @@ class Compiler:
 
         # Add program exit
         self.text_section.append("# Exit program")
-        self.text_section.append("li $v0, 10")
-        self.text_section.append("syscall")
+        self.text_section.append("enderman $v0, 10")
+        self.text_section.append("TheNether")
 
         # Generate final assembly
         asm = ".data\n"
@@ -525,55 +635,43 @@ class Compiler:
         return asm
 
 
-# Example usage
-compiler = Compiler()
-c_program = """
-int i;
-int three;
-int five;
-int step;
-int fizz;
-int buzz;
-int cond;
+def main():
+    # Default filenames
+    input_file = "program.c"
+    output_file = "program.asm"
 
-three = 3;
-five = 5;
-step = 1;
-i = 1;
+    # Check if input file is provided as argument
+    if len(sys.argv) >= 2:
+        input_file = sys.argv[1]
 
-while (i < 100) {
-    fizz = 0;
-    buzz = 0;
+    # Check if output file is provided as argument
+    if len(sys.argv) >= 3:
+        output_file = sys.argv[2]
+    else:
+        # If no output file is specified, use the same name with .asm extension
+        base_name = os.path.splitext(input_file)[0]
+        output_file = base_name + ".asm"
 
-    cond = i % three;
-    if (cond == 0) {
-        fizz = 1;
-    }
+    try:
+        # Read C code from input file
+        with open(input_file, 'r') as f:
+            c_code = f.read()
 
-    cond = i % five;
-    if (cond == 0) {
-        buzz = 1;
-    }
+        # Compile the code
+        compiler = Compiler()
+        asm_output = compiler.compile(c_code)
 
-    if (fizz == 1) {
-        print_str("Fizz");
-    }
+        # Write assembly output to file
+        with open(output_file, 'w') as f:
+            f.write(asm_output)
 
-    if (buzz == 1) {
-        print_str("Buzz");
-    }
+        print(f"Compilation successful! Output written to {output_file}")
 
-    if (fizz == 0 && buzz == 0) {
-        print_int(i);
-    }
+    except FileNotFoundError:
+        print(f"Error: Input file '{input_file}' not found.")
+    except Exception as e:
+        print(f"Error during compilation: {e}")
 
-    print_str("\\n");
-    i = i + step;
-}
-"""
 
-asm_output = compiler.compile(c_program)
-print("Assembly output:")
-print(asm_output)
-
-print("Compilation complete.")
+if __name__ == "__main__":
+    main()
