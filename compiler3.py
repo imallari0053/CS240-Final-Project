@@ -370,7 +370,7 @@ class Compiler:
             self.compile_statement(stmt)
 
         # Jump back to start
-        self.text_section.append(f"j {start_label}")
+        self.text_section.append(f"craftingTable {start_label}")
         self.text_section.append(f"{end_label}:")
 
     def extract_string_from_print(self, statement):
